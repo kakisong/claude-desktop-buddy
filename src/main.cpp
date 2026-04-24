@@ -1001,9 +1001,39 @@ void loop() {
 
   if ((int32_t)(now - oneShotUntil) >= 0) activeState = baseState;
 
-  // LED: pulse on attention, otherwise off
-  if (activeState == P_ATTENTION && settings().led) {
-    digitalWrite(LED_PIN, (now / 400) % 2 ? LOW : HIGH);
+  // Completion fanfare: animation + lively ascending 3-note chirp.
+  // Trigger: sessionsRunning falls to 0 while connected and no pending
+  // prompt. Tones queued across loop ticks (no delay(), no current spike).
+  static uint8_t lastRunning = 0;
+  static uint8_t chirpsLeft = 0;
+  static uint32_t nextChirpAt = 0;
+  static uint32_t ledNotifyUntil = 0;
+  bool runningFellToZero = tama.connected
+                        && lastRunning > 0
+                        && tama.sessionsRunning == 0
+                        && tama.sessionsWaiting == 0;
+  lastRunning = tama.sessionsRunning;
+  if (runningFellToZero && chirpsLeft == 0) {
+    Serial.println("[notify] task complete");
+    chirpsLeft = 3;
+    nextChirpAt = now;
+    ledNotifyUntil = now + 3000;
+    triggerOneShot(P_CELEBRATE, 3000);
+  }
+  if (chirpsLeft > 0 && (int32_t)(now - nextChirpAt) >= 0) {
+    // A major triad ascending: A6 → C#7 → E7. Short + tight = lively.
+    static const uint16_t notes[] = { 1760, 2217, 2637 };
+    beep(notes[3 - chirpsLeft], 70);
+    nextChirpAt = now + 110;
+    chirpsLeft--;
+  }
+
+  // LED: pulse on attention, or during the 3s notify window, otherwise off
+  bool attentionBlink = (activeState == P_ATTENTION);
+  bool notifyBlink    = ((int32_t)(now - ledNotifyUntil) < 0);
+  if ((attentionBlink || notifyBlink) && settings().led) {
+    uint32_t period = attentionBlink ? 400 : 200;
+    digitalWrite(LED_PIN, (now / period) % 2 ? LOW : HIGH);
   } else {
     digitalWrite(LED_PIN, HIGH);
   }
