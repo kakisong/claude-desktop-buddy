@@ -724,47 +724,132 @@ static uint8_t wrapInto(const char* in, char out[][24], uint8_t maxRows, uint8_t
 
 static void drawApproval() {
   const Palette& p = characterPalette();
-  const int AREA = 78;
-  spr.fillRect(0, H - AREA, W, AREA, p.bg);
-  spr.drawFastHLine(0, H - AREA, W, p.textDim);
-
-  spr.setTextSize(1);
-  spr.setTextColor(p.textDim, p.bg);
-  spr.setCursor(4, H - AREA + 4);
   uint32_t waited = (millis() - promptArrivedMs) / 1000;
-  if (waited >= 10) spr.setTextColor(HOT, p.bg);
-  spr.printf("approve? %lus", (unsigned long)waited);
 
-  // Size 2 only if it fits one line (~10 chars at 12px on 135px screen)
-  int toolLen = strlen(tama.promptTool);
-  spr.setTextColor(p.text, p.bg);
-  spr.setTextSize(toolLen <= 10 ? 2 : 1);
-  spr.setCursor(4, H - AREA + (toolLen <= 10 ? 14 : 18));
-  spr.print(tama.promptTool);
-  spr.setTextSize(1);
+  if (clockOrient == 0) {
+    const int AREA = 78;
+    spr.fillRect(0, H - AREA, W, AREA, p.bg);
+    spr.drawFastHLine(0, H - AREA, W, p.textDim);
 
-  // Hint wraps at ~21 chars to two lines under the tool name
-  spr.setTextColor(p.textDim, p.bg);
-  int hlen = strlen(tama.promptHint);
-  spr.setCursor(4, H - AREA + 34);
-  spr.printf("%.21s", tama.promptHint);
-  if (hlen > 21) {
-    spr.setCursor(4, H - AREA + 42);
-    spr.printf("%.21s", tama.promptHint + 21);
-  }
-
-  if (responseSent) {
+    spr.setTextSize(1);
     spr.setTextColor(p.textDim, p.bg);
-    spr.setCursor(4, H - 12);
-    spr.print("sent...");
-  } else {
-    spr.setTextColor(GREEN, p.bg);
-    spr.setCursor(4, H - 12);
-    spr.print("A: approve");
-    spr.setTextColor(HOT, p.bg);
-    spr.setCursor(W - 48, H - 12);
-    spr.print("B: deny");
+    spr.setCursor(4, H - AREA + 4);
+    if (waited >= 10) spr.setTextColor(HOT, p.bg);
+    spr.printf("approve? %lus", (unsigned long)waited);
+
+    // Size 2 only if it fits one line (~10 chars at 12px on 135px screen)
+    int toolLen = strlen(tama.promptTool);
+    spr.setTextColor(p.text, p.bg);
+    spr.setTextSize(toolLen <= 10 ? 2 : 1);
+    spr.setCursor(4, H - AREA + (toolLen <= 10 ? 14 : 18));
+    spr.print(tama.promptTool);
+    spr.setTextSize(1);
+
+    // Hint wraps at ~21 chars to two lines under the tool name
+    spr.setTextColor(p.textDim, p.bg);
+    int hlen = strlen(tama.promptHint);
+    spr.setCursor(4, H - AREA + 34);
+    spr.printf("%.21s", tama.promptHint);
+    if (hlen > 21) {
+      spr.setCursor(4, H - AREA + 42);
+      spr.printf("%.21s", tama.promptHint + 21);
+    }
+
+    if (responseSent) {
+      spr.setTextColor(p.textDim, p.bg);
+      spr.setCursor(4, H - 12);
+      spr.print("sent...");
+    } else {
+      spr.setTextColor(GREEN, p.bg);
+      spr.setCursor(4, H - 12);
+      spr.print("A: approve");
+      spr.setTextColor(HOT, p.bg);
+      spr.setCursor(W - 48, H - 12);
+      spr.print("B: deny");
+    }
+    return;
   }
+
+  // Landscape: 240×135 direct-to-LCD. Mirrors drawClock — buddy on the left
+  // in a 115×90 box, approval text in the right panel. Full fill only on
+  // entry; subsequent frames repaint only the ticking timer and the
+  // button/sent line. Tool/hint repaint gated on a prompt-id change so a
+  // back-to-back second prompt doesn't leave stale glyphs.
+  M5.Lcd.setRotation(clockOrient);
+  bool repaint = paintedOrient != clockOrient;
+  if (repaint) { M5.Lcd.fillScreen(p.bg); paintedOrient = clockOrient; }
+
+  static char paintedPromptId[40] = "";
+  bool promptChanged = strncmp(paintedPromptId, tama.promptId, sizeof(paintedPromptId)) != 0;
+  if (promptChanged) {
+    strncpy(paintedPromptId, tama.promptId, sizeof(paintedPromptId)-1);
+    paintedPromptId[sizeof(paintedPromptId)-1] = 0;
+  }
+
+  const int RX = 120;    // right panel left edge
+  if (repaint) M5.Lcd.drawFastVLine(RX - 3, 0, 135, p.textDim);
+
+  // Timer line ticks every frame; cheap enough to overwrite unconditionally.
+  M5.Lcd.fillRect(RX, 2, 240 - RX, 10, p.bg);
+  M5.Lcd.setTextSize(1);
+  M5.Lcd.setTextColor(waited >= 10 ? HOT : p.textDim, p.bg);
+  M5.Lcd.setCursor(RX + 2, 4);
+  M5.Lcd.printf("approve? %lus", (unsigned long)waited);
+
+  // Tool + hint: static per-prompt, repaint only on orient or prompt change.
+  if (repaint || promptChanged) {
+    M5.Lcd.fillRect(RX, 16, 240 - RX, 92, p.bg);
+    int toolLen = strlen(tama.promptTool);
+    M5.Lcd.setTextColor(p.text, p.bg);
+    M5.Lcd.setTextSize(toolLen <= 10 ? 2 : 1);
+    M5.Lcd.setCursor(RX + 2, toolLen <= 10 ? 22 : 26);
+    M5.Lcd.print(tama.promptTool);
+    M5.Lcd.setTextSize(1);
+
+    // Right panel fits ~19 chars/line at size 1; promptHint is capped at 44.
+    M5.Lcd.setTextColor(p.textDim, p.bg);
+    const int HWRAP = 19;
+    int hlen = strlen(tama.promptHint);
+    for (int i = 0; i < 4 && i * HWRAP < hlen; i++) {
+      char buf[HWRAP + 1];
+      int n = hlen - i * HWRAP;
+      if (n > HWRAP) n = HWRAP;
+      memcpy(buf, tama.promptHint + i * HWRAP, n);
+      buf[n] = 0;
+      M5.Lcd.setCursor(RX + 2, 50 + i * 10);
+      M5.Lcd.print(buf);
+    }
+  }
+
+  // Button / sent line: flips when responseSent toggles, so always repaint.
+  M5.Lcd.fillRect(RX, 120, 240 - RX, 12, p.bg);
+  if (responseSent) {
+    M5.Lcd.setTextColor(p.textDim, p.bg);
+    M5.Lcd.setCursor(RX + 2, 124);
+    M5.Lcd.print("sent...");
+  } else {
+    M5.Lcd.setTextColor(GREEN, p.bg);
+    M5.Lcd.setCursor(RX + 2, 124);
+    M5.Lcd.print("A: approve");
+    M5.Lcd.setTextColor(HOT, p.bg);
+    M5.Lcd.setCursor(240 - 44, 124);
+    M5.Lcd.print("B: deny");
+  }
+
+  // Buddy/character on the left at 5fps (same cadence as drawClock).
+  static uint32_t lastPetTick = 0;
+  if (repaint || millis() - lastPetTick >= 200) {
+    lastPetTick = millis();
+    if (buddyMode) {
+      M5.Lcd.fillRect(0, 0, 115, 90, p.bg);
+      buddyRenderTo(&M5.Lcd, activeState);
+    } else {
+      characterSetState(activeState);
+      characterRenderTo(&M5.Lcd, 57, 45);
+    }
+  }
+
+  M5.Lcd.setRotation(0);
 }
 
 static void tinyHeart(int x, int y, bool filled, uint16_t col) {
@@ -887,52 +972,135 @@ void drawPet() {
   spr.printf("%u/%u", petPage + 1, PET_PAGES);
 }
 
+// Shared wrap buffers for drawHUD. Sized 40 to cover tama.lines[8] fully
+// wrapped at width 19 (landscape); portrait's width-21 path uses fewer rows.
+static char    hudDisp[40][24];
+static uint8_t hudSrcOf[40];
+
 void drawHUD() {
   if (tama.promptId[0]) { drawApproval(); return; }
   const Palette& p = characterPalette();
-  const int SHOW = 3, LH = 8, WIDTH = 21;
-  const int AREA = SHOW * LH + 4;
-  spr.fillRect(0, H - AREA, W, AREA, p.bg);
-  spr.setTextSize(1);
 
   if (tama.lineGen != lastLineGen) { msgScroll = 0; lastLineGen = tama.lineGen; wake(); }
 
-  if (tama.nLines == 0) {
-    spr.setTextColor(p.text, p.bg);
-    spr.setCursor(4, H - LH - 2);
-    spr.print(tama.msg);
+  if (clockOrient == 0) {
+    const int SHOW = 3, LH = 8, WIDTH = 21;
+    const int AREA = SHOW * LH + 4;
+    spr.fillRect(0, H - AREA, W, AREA, p.bg);
+    spr.setTextSize(1);
+
+    if (tama.nLines == 0) {
+      spr.setTextColor(p.text, p.bg);
+      spr.setCursor(4, H - LH - 2);
+      spr.print(tama.msg);
+      return;
+    }
+
+    // Wrap all transcript lines into a flat display buffer. Track which
+    // transcript index each display row came from, so we can dim older ones.
+    uint8_t nDisp = 0;
+    for (uint8_t i = 0; i < tama.nLines && nDisp < 40; i++) {
+      uint8_t got = wrapInto(tama.lines[i], &hudDisp[nDisp], 40 - nDisp, WIDTH);
+      for (uint8_t j = 0; j < got; j++) hudSrcOf[nDisp + j] = i;
+      nDisp += got;
+    }
+
+    uint8_t maxBack = (nDisp > SHOW) ? (nDisp - SHOW) : 0;
+    if (msgScroll > maxBack) msgScroll = maxBack;
+
+    int end = (int)nDisp - msgScroll;
+    int start = end - SHOW; if (start < 0) start = 0;
+    uint8_t newest = tama.nLines - 1;
+    for (int i = 0; start + i < end; i++) {
+      uint8_t row = start + i;
+      bool fresh = (hudSrcOf[row] == newest) && (msgScroll == 0);
+      spr.setTextColor(fresh ? p.text : p.textDim, p.bg);
+      spr.setCursor(4, H - AREA + 2 + i * LH);
+      spr.print(hudDisp[row]);
+    }
+    if (msgScroll > 0) {
+      spr.setTextColor(p.body, p.bg);
+      spr.setCursor(W - 18, H - LH - 2);
+      spr.printf("-%u", msgScroll);
+    }
     return;
   }
 
-  // Wrap all transcript lines into a flat display buffer. Track which
-  // transcript index each display row came from, so we can dim older ones.
-  static char disp[32][24];
-  static uint8_t srcOf[32];
-  uint8_t nDisp = 0;
-  for (uint8_t i = 0; i < tama.nLines && nDisp < 32; i++) {
-    uint8_t got = wrapInto(tama.lines[i], &disp[nDisp], 32 - nDisp, WIDTH);
-    for (uint8_t j = 0; j < got; j++) srcOf[nDisp + j] = i;
-    nDisp += got;
+  // Landscape: 240×135 direct-to-LCD. Left pet box compressed to ~100px
+  // (widest buddy sprites centered at x=67 span to ~x=118, so we accept
+  // a few pixels of right-side clip on the busiest species in exchange
+  // for a much wider text panel). Right panel shows the transcript as a
+  // terminal: newest line anchored to the bottom, older lines stacking
+  // upward. Text area only repaints on lineGen / scroll / orientation
+  // change — without that gate, fillRect at 60fps flickers visibly.
+  M5.Lcd.setRotation(clockOrient);
+  bool repaint = paintedOrient != clockOrient;
+  if (repaint) { M5.Lcd.fillScreen(p.bg); paintedOrient = clockOrient; }
+
+  const int RX = 104;                // text panel left edge
+  const int PANEL_TOP = 2, PANEL_BOT = 134;
+  const int LH = 8, SHOW = 15, WIDTH = 22;
+  if (repaint) M5.Lcd.drawFastVLine(RX - 3, 0, 135, p.textDim);
+
+  static uint32_t paintedGen = 0xFFFFFFFF;
+  static uint8_t  paintedScroll = 0xFF;
+  bool textDirty = repaint
+                || tama.lineGen != paintedGen
+                || msgScroll != paintedScroll;
+
+  if (textDirty) {
+    M5.Lcd.fillRect(RX, PANEL_TOP, 240 - RX, PANEL_BOT - PANEL_TOP, p.bg);
+    M5.Lcd.setTextSize(1);
+
+    if (tama.nLines == 0) {
+      M5.Lcd.setTextColor(p.text, p.bg);
+      M5.Lcd.setCursor(RX + 2, PANEL_BOT - LH);
+      M5.Lcd.print(tama.msg);
+    } else {
+      uint8_t nDisp = 0;
+      for (uint8_t i = 0; i < tama.nLines && nDisp < 40; i++) {
+        uint8_t got = wrapInto(tama.lines[i], &hudDisp[nDisp], 40 - nDisp, WIDTH);
+        for (uint8_t j = 0; j < got; j++) hudSrcOf[nDisp + j] = i;
+        nDisp += got;
+      }
+      uint8_t maxBack = (nDisp > SHOW) ? (nDisp - SHOW) : 0;
+      if (msgScroll > maxBack) msgScroll = maxBack;
+      int end = (int)nDisp - msgScroll;
+      int start = end - SHOW; if (start < 0) start = 0;
+      int vis = end - start;
+      int yTop = PANEL_BOT - vis * LH;   // newest sticks to the bottom
+      uint8_t newest = tama.nLines - 1;
+      for (int i = 0; i < vis; i++) {
+        uint8_t row = start + i;
+        bool fresh = (hudSrcOf[row] == newest) && (msgScroll == 0);
+        M5.Lcd.setTextColor(fresh ? p.text : p.textDim, p.bg);
+        M5.Lcd.setCursor(RX + 2, yTop + i * LH);
+        M5.Lcd.print(hudDisp[row]);
+      }
+      if (msgScroll > 0) {
+        M5.Lcd.setTextColor(p.body, p.bg);
+        M5.Lcd.setCursor(240 - 22, PANEL_TOP + 2);
+        M5.Lcd.printf("-%u", msgScroll);
+      }
+    }
+    paintedGen = tama.lineGen;
+    paintedScroll = msgScroll;
   }
 
-  uint8_t maxBack = (nDisp > SHOW) ? (nDisp - SHOW) : 0;
-  if (msgScroll > maxBack) msgScroll = maxBack;
+  // Buddy on the left at 5fps, same cadence as drawClock.
+  static uint32_t lastPetTick = 0;
+  if (repaint || millis() - lastPetTick >= 200) {
+    lastPetTick = millis();
+    if (buddyMode) {
+      M5.Lcd.fillRect(0, 0, RX - 3, 90, p.bg);
+      buddyRenderTo(&M5.Lcd, activeState);
+    } else {
+      characterSetState(activeState);
+      characterRenderTo(&M5.Lcd, (RX - 3) / 2, 45);
+    }
+  }
 
-  int end = (int)nDisp - msgScroll;
-  int start = end - SHOW; if (start < 0) start = 0;
-  uint8_t newest = tama.nLines - 1;
-  for (int i = 0; start + i < end; i++) {
-    uint8_t row = start + i;
-    bool fresh = (srcOf[row] == newest) && (msgScroll == 0);
-    spr.setTextColor(fresh ? p.text : p.textDim, p.bg);
-    spr.setCursor(4, H - AREA + 2 + i * LH);
-    spr.print(disp[row]);
-  }
-  if (msgScroll > 0) {
-    spr.setTextColor(p.body, p.bg);
-    spr.setCursor(W - 18, H - LH - 2);
-    spr.printf("-%u", msgScroll);
-  }
+  M5.Lcd.setRotation(0);
 }
 
 void setup() {
@@ -1181,19 +1349,36 @@ void loop() {
                && !menuOpen && !settingsOpen && !resetOpen && !inPrompt
                && tama.sessionsRunning == 0 && tama.sessionsWaiting == 0
                && dataRtcValid() && _onUsb;
-  if (clocking) clockUpdateOrient();
+  // Approval and normal HUD both honor landscape; menus/settings/reset are
+  // sprite-only and force portrait so they stay readable. HUD gate skips
+  // info/pet pages, passkey overlay, and the "HUD off" preference.
+  bool approvalLand = inPrompt && !menuOpen && !settingsOpen && !resetOpen;
+  bool hudLand = !clocking && !inPrompt
+              && displayMode == DISP_NORMAL
+              && !menuOpen && !settingsOpen && !resetOpen
+              && settings().hud && !blePasskey();
+  if (clocking || approvalLand || hudLand) clockUpdateOrient();
   else { clockOrient = 0; orientFrames = 0; paintedOrient = 0; }
-  bool landscapeClock = clocking && clockOrient != 0;
+  bool landscapeClock   = clocking     && clockOrient != 0;
+  bool landscapePrompt  = approvalLand && clockOrient != 0;
+  bool landscapeHud     = hudLand      && clockOrient != 0;
+  bool landscapeView    = landscapeClock || landscapePrompt || landscapeHud;
 
   static bool wasClocking = false;
+  static bool wasInPrompt = false;
+  static bool wasHud = false;
   static bool wasLandscape = false;
-  if (clocking != wasClocking || landscapeClock != wasLandscape) {
-    if (clocking && !landscapeClock) characterSetPeek(true);
+  if (clocking != wasClocking || approvalLand != wasInPrompt
+      || hudLand != wasHud || landscapeView != wasLandscape) {
+    if (clocking && !landscapeView) characterSetPeek(true);
     else applyDisplayMode();
     characterInvalidate();
     if (buddyMode) buddyInvalidate();
+    paintedOrient = 0;   // force full repaint on next draw{Clock,Approval,HUD}
     wasClocking = clocking;
-    wasLandscape = landscapeClock;
+    wasInPrompt = approvalLand;
+    wasHud = hudLand;
+    wasLandscape = landscapeView;
   }
   if (clocking) {
     uint8_t dow = clockDow();
@@ -1215,9 +1400,9 @@ void loop() {
   if (pk && !lastPasskey) { wake(); beep(1800, 60); }
   lastPasskey = pk;
 
-  if (napping || screenOff || landscapeClock) {
-    // skip sprite render — face-down, powered off, or landscape clock
-    // (which draws direct-to-LCD below)
+  if (napping || screenOff || landscapeView) {
+    // skip sprite render — face-down, powered off, or landscape view
+    // (clock/approval draw direct-to-LCD below)
   } else if (buddyMode) {
     buddyTick(activeState);
   } else if (characterLoaded()) {
@@ -1247,6 +1432,10 @@ void loop() {
   }
   if (landscapeClock) {
     drawClock();
+  } else if (landscapePrompt) {
+    drawApproval();
+  } else if (landscapeHud) {
+    drawHUD();
   } else if (!napping && !screenOff) {
     if (blePasskey()) drawPasskey();
     else if (clocking) drawClock();
